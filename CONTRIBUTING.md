@@ -78,7 +78,7 @@ or temporary files. In particular:
 
 - No `MEMORY.md` or other private memory files.
 - No `.agentix/audit.jsonl`, `.claude/`, or session transcripts.
-- No SSH keys, tokens, or credentials.
+- No SSH keys, API credentials, or other secret material.
 - No editor temp files (`*.swp`, `*.bak`, `*~`, `*.save`).
 - No local logs or `*.tmp` files.
 - No personal home paths or usernames in source code.
