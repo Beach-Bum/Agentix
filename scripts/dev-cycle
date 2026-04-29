@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+echo "Running tests..."
+uv run pytest
+
+echo
+echo "Reinstalling Agentix..."
+uv tool install --editable . --reinstall
+
+echo
+echo "Checking installed command..."
+agentix --help >/dev/null
+
+echo
+echo "Git status:"
+git status --short
+
+echo
+echo "Dev cycle complete."

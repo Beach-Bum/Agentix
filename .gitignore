@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.agentix/
+result
+result-*
+uv.lock
+
+# Private/local project memory
+private/
+*.local.md
+
+# Agentix runtime state
+.agentix/
+*.py[cod]
+.ruff_cache/

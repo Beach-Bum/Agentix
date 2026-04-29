@@ -1,0 +1,18 @@
+[project]
+name = "agentix"
+version = "0.1.0"
+description = "Agentic control layer for NixOS and Nix flakes"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+agentix = "agentix.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]
