@@ -1,5 +1,14 @@
 # Agentix
 
+Agentix is a safety-first control layer for building toward an agentic operating system.
+The long-term goal is an OS where AI agents can help configure, repair, maintain, and evolve the machine — without receiving unrestricted live-system control.
+
+Agentix starts with NixOS because NixOS gives us a strong foundation for this work: declarative configuration, reproducible builds, rollback-friendly changes, and clear system boundaries.
+The current workflow is deliberately conservative:
+
+```text
+plan -> sandbox -> propose -> verify -> human apply/rebuild
+
 Agentix is a cautious control layer for NixOS and Nix flake work. It helps an
 LLM (or a human) plan and prepare configuration changes inside a sandboxed Git
 worktree, save them as reviewable proposal patches, and stop. The human
