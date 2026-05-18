@@ -1,88 +1,117 @@
 # Agentix
 
-Agentix is a safety-first control layer for building toward an agentic operating system.
-The long-term goal is an OS where AI agents can help configure, repair, maintain, and evolve the machine — without receiving unrestricted live-system control.
+A safety-first control layer that lets LLM agents propose NixOS configuration changes without live-system access.
 
-Agentix starts with NixOS because NixOS gives us a strong foundation for this work: declarative configuration, reproducible builds, rollback-friendly changes, and clear system boundaries.
-The current workflow is deliberately conservative:
+## Why not just use good VCS hygiene?
 
-```text
+Tools like `jj` or disciplined Git workflows already prevent "mixing" approved and unapproved changes. Agentix solves a different problem: an LLM agent wants to change your NixOS configuration, but you don't want it anywhere near `sudo nixos-rebuild switch`.
+
+Agentix gives the agent a sandbox (a temporary Git worktree), lets it plan and write changes there, captures the result as a reviewable patch, and stops. The agent never touches your source tree or runs privileged commands. You review the diff, apply it yourself, and rebuild.
+
+The core loop:
+
+```
 plan -> sandbox -> propose -> verify -> human apply/rebuild
+```
 
-Agentix is a cautious control layer for NixOS and Nix flake work. It helps an
-LLM (or a human) plan and prepare configuration changes inside a sandboxed Git
-worktree, save them as reviewable proposal patches, and stop. The human
-applies the patch and runs the rebuild.
+This isn't about version control — it's about constraining what an LLM can do to your system while still letting it be useful.
 
-Agentix does not run `sudo`, `nixos-rebuild switch`, or `rebuild-nixos`. It
-does not edit `/etc/nixos`. It does not push or commit system config changes.
-Apply, verify, and activation are human-only. Agentix prepares verified
-proposals; the human owns the apply and rebuild step.
+## Install
+
+### With Nix (recommended)
+
+Run directly:
+
+```sh
+nix run github:Beach-Bum/Agentix -- --help
+```
+
+Development shell:
+
+```sh
+nix develop github:Beach-Bum/Agentix
+```
+
+Install to your NixOS system or home-manager profile by adding the flake input:
+
+```nix
+# flake.nix
+{
+  inputs.agentix.url = "github:Beach-Bum/Agentix";
+
+  # In your system or home-manager config:
+  # environment.systemPackages = [ inputs.agentix.packages.${system}.default ];
+}
+```
+
+### With pip/uv
+
+```sh
+pip install git+https://github.com/Beach-Bum/Agentix.git
+```
+
+Or for development:
+
+```sh
+git clone https://github.com/Beach-Bum/Agentix.git
+cd Agentix
+uv sync --group dev
+```
 
 ## What it does today
 
 | Version | Capability |
-|---|---|
-| v0.1 | MVP: inspect repos, propose Nix dev shells, save patches, manual apply with audit. |
-| v0.2 | Sandboxed agent-loop: run a goal in a temporary Git worktree, save the diff as a proposal. Source workspace stays untouched. |
-| v0.3 | Controller layer: `controller-plan` describes the contract, `controller-run` plans and (optionally) executes a goal end-to-end with full audit, a hardened source-untouched invariant, and conservative subprocess timeouts. Claude Code integrates here. |
+|---------|------------|
+| v0.1 | Inspect repos, propose Nix dev shells, save patches, manual apply with audit |
+| v0.2 | Sandboxed agent-loop: run a goal in a temporary Git worktree, save the diff as a proposal. Source workspace stays untouched |
+| v0.3 | Controller layer: `controller-plan` describes the safety contract, `controller-run` plans and (optionally) executes a goal end-to-end with full audit, hardened source-untouched invariant, and conservative subprocess timeouts |
 
-## Commands at a glance
+## Commands
 
-- `agentix controller-plan --path <repo> --json` — print the safety contract.
-- `agentix controller-run "<goal>" --path <repo>` — dry-run only.
-- `agentix controller-run "<goal>" --path <repo> --execute` — run the goal in a temp worktree, save a proposal patch, stop.
-- `agentix worktree-run "<goal>" --path <repo> --save-proposal --json` — lower-level form for scripts. `--keep` retains the temp worktree for inspection.
-- `agentix agent-loop "<goal>" --path <repo>` — single-pass agent loop.
-- `agentix audit tail --path <repo> --json` / `agentix audit summary --path <repo> --json` — review what happened.
-- `agentix public-check --path <repo>` / `agentix export-public --path <repo> --dest <out> --yes` — check for or strip private artifacts before sharing.
+```sh
+# Print the safety contract for a repo
+agentix controller-plan --path <repo> --json
 
-See [docs/CONTROLLER.md](docs/CONTROLLER.md) for the full flag tables.
+# Dry-run a goal (no changes)
+agentix controller-run "<goal>" --path <repo>
+
+# Execute: run the goal in a temp worktree, save a proposal patch, stop
+agentix controller-run "<goal>" --path <repo> --execute
+
+# Lower-level form for scripts (--keep retains the temp worktree)
+agentix worktree-run "<goal>" --path <repo> --save-proposal --json
+
+# Single-pass agent loop
+agentix agent-loop "<goal>" --path <repo>
+
+# Review audit trail
+agentix audit tail --path <repo> --json
+agentix audit summary --path <repo> --json
+
+# Check for private artifacts before publishing
+agentix public-check --path <repo>
+agentix export-public --path <repo> --dest <out> --yes
+```
+
+See [docs/CONTROLLER.md](docs/CONTROLLER.md) for the full flag reference.
 
 ## Safety invariants
 
-- **Source workspace untouched.** Every controller and worktree run snapshots
-  HEAD, `git diff HEAD --`, and SHA-256 of every untracked file before and
-  after the inner subprocess. Any unexpected change → exit non-zero with
-  `error="source_workspace_mutated"`. The only allowed mutation is exactly
-  one new patch under `.agentix/proposals/` when `--save-proposal` (or
-  `controller-run --execute`) asks for it.
-- **No apply, no rebuild, no sudo from the agent.** The agent stops at the
-  saved proposal. A human runs `agentix apply-verify` and `rebuild-nixos`.
-- **Conservative subprocess timeout.** Default 1800 seconds (30 minutes) on
-  the inner goal subprocess (`--timeout SECONDS` to override). Timeout
-  returns exit code 124 with `error="timeout"` and a clear audit line.
-- **Audit log per run.** One JSON line per controller-run / worktree-run /
-  agent-loop invocation, appended to `<repo>/.agentix/audit.jsonl`
-  (gitignored). Inspect with `agentix audit tail` and `agentix audit summary`.
+- **Source workspace untouched.** Every run snapshots HEAD, `git diff HEAD --`, and SHA-256 of every untracked file before and after the subprocess. Any unexpected mutation exits non-zero with `error="source_workspace_mutated"`. The only allowed write is one new patch under `.agentix/proposals/`.
+- **No apply, no rebuild, no sudo.** The agent stops at the saved proposal. A human runs `agentix apply-verify` and `nixos-rebuild switch`.
+- **Subprocess timeout.** Default 1800s (30 min) on the inner goal subprocess (`--timeout SECONDS` to override). Timeout exits 124 with `error="timeout"`.
+- **Audit log per run.** One JSON line per invocation, appended to `<repo>/.agentix/audit.jsonl` (gitignored). Inspect with `agentix audit tail` and `agentix audit summary`.
 
 ## Claude Code integration
 
-Claude Code (and other LLM controllers) operate against the same contract.
-Read [docs/prompts/claude-agentix-controller.md](docs/prompts/claude-agentix-controller.md)
-and [docs/CLAUDE-CODE.md](docs/CLAUDE-CODE.md) for the session contract. The
-controller stops at the saved-proposal rung; the human takes over from there.
+Claude Code (and other LLM controllers) operate against the same contract. See [docs/CLAUDE-CODE.md](docs/CLAUDE-CODE.md) and [docs/prompts/claude-agentix-controller.md](docs/prompts/claude-agentix-controller.md) for the session contract.
 
-## Public release
+## Docs
 
-Private workspaces typically contain `MEMORY.md`, `.agentix/audit.jsonl`,
-`.claude/`, local checkpoints, transcripts, and other session artifacts. Do
-not publish a private repo's history directly. Use the sanitized export
-workflow:
+- [docs/OPERATING.md](docs/OPERATING.md) — operating contract and workflow
+- [docs/CONTROLLER.md](docs/CONTROLLER.md) — controller commands and flags
+- [docs/CLAUDE-CODE.md](docs/CLAUDE-CODE.md) — Claude Code integration
 
-```
-agentix public-check --path ~/projects/agentix
-agentix export-public --path ~/projects/agentix --dest /tmp/agentix-public --yes
-agentix public-check --path /tmp/agentix-public
-```
+## License
 
-`public-check` recursively flags Claude session state, transcripts, audit
-logs, editor temps, and other private artifacts. `export-public` mirrors the
-same exclusions when copying.
-
-## Further reading
-
-- [docs/OPERATING.md](docs/OPERATING.md) — operating contract and workflow.
-- [docs/CONTROLLER.md](docs/CONTROLLER.md) — controller commands and flags.
-- [docs/CLAUDE-CODE.md](docs/CLAUDE-CODE.md) — Claude Code integration contract.
-- [docs/prompts/claude-agentix-controller.md](docs/prompts/claude-agentix-controller.md) — the LLM session prompt.
+MIT
