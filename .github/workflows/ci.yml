@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check for unclosed code blocks
+        run: |
+          err=0
+          for f in $(find . -name '*.md' -not -path './.git/*'); do
+            fences=$(grep -c '^```' "$f" || true)
+            if (( fences % 2 != 0 )); then
+              echo "::error file=$f::Unclosed code block ($fences fence lines)"
+              err=1
+            fi
+          done
+          exit $err
+
+      - name: Python syntax check
+        run: |
+          find . -name '*.py' -not -path './.git/*' | xargs -I{} python3 -c "import ast, sys; ast.parse(open(sys.argv[1]).read())" {}
+
+      - name: Run tests
+        run: |
+          pip install -e ".[dev]" 2>/dev/null || pip install -e .
+          pip install pytest
+          pytest tests/ -x --tb=short
+
+  nix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Flake check
+        run: nix flake check
+
+      - name: Build package
+        run: nix build
