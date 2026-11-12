@@ -1,6 +1,9 @@
 import json
+import shutil
 import subprocess
 from pathlib import Path
+
+import pytest
 
 
 def run_agentix(*args: str, cwd: Path) -> subprocess.CompletedProcess:
@@ -108,6 +111,10 @@ def create_nixos_fixture(path: Path) -> None:
     subprocess.run(["git", "commit", "-m", "Initial fixture"], cwd=path, check=True, capture_output=True)
 
 
+@pytest.mark.skipif(
+    not all(shutil.which(c) for c in ("git", "nix", "nixos-rebuild")),
+    reason="doctor requires git, nix and nixos-rebuild, so it can only report ready on a NixOS host",
+)
 def test_doctor_passes_on_initialized_fixture(tmp_path: Path) -> None:
     project = tmp_path / "nixos-config"
     project.mkdir()
