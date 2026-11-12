@@ -1493,6 +1493,93 @@ git add modules/legit.nix
     assert (project / "modules" / "tampered.nix").exists()
 
 
+def _tainting_agent(tmp_path: Path, project: Path, then: str) -> Path:
+    """A fake agent that writes into the real workspace, then runs `then`."""
+    fake_agentix = tmp_path / "fake-agentix"
+    fake_agentix.write_text(
+        f"""#!/usr/bin/env bash
+printf '%s\n' '# tainted source file' > "{project}/modules/tampered.nix"
+{then}
+""",
+        encoding="utf-8",
+    )
+    fake_agentix.chmod(0o755)
+    return fake_agentix
+
+
+def test_worktree_run_failed_goal_still_reports_source_taint(tmp_path: Path, capsys) -> None:
+    from agentix.worktree_run import worktree_run
+
+    project = tmp_path / "nixos-config"
+    project.mkdir()
+    create_nixos_fixture(project)
+
+    result = worktree_run(
+        path=project,
+        goal="create module legit with template packages",
+        agentix_command=str(_tainting_agent(tmp_path, project, "exit 7")),
+        json_output=True,
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert result == 7
+    assert payload["passed"] is False
+    assert payload["error"] == "goal_failed"
+    assert payload["source_modified"] is True
+    assert any("modules/tampered.nix" in m for m in payload["source_mutations"])
+
+    events = _read_audit_events(project)
+    assert events[-1]["result"] == "goal_failed"
+    assert events[-1]["source_modified"] is True
+
+
+def test_worktree_run_timeout_still_reports_source_taint(tmp_path: Path, capsys) -> None:
+    from agentix.worktree_run import worktree_run
+
+    project = tmp_path / "nixos-config"
+    project.mkdir()
+    create_nixos_fixture(project)
+
+    result = worktree_run(
+        path=project,
+        goal="create module legit with template packages",
+        agentix_command=str(_tainting_agent(tmp_path, project, "exec sleep 30")),
+        json_output=True,
+        timeout=2,
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert result == 124
+    assert payload["error"] == "timeout"
+    assert payload["source_modified"] is True
+    assert any("modules/tampered.nix" in m for m in payload["source_mutations"])
+
+
+def test_worktree_run_clean_failed_goal_reports_source_untouched(tmp_path: Path, capsys) -> None:
+    from agentix.worktree_run import worktree_run
+
+    project = tmp_path / "nixos-config"
+    project.mkdir()
+    create_nixos_fixture(project)
+
+    fake_agentix = tmp_path / "fake-agentix"
+    fake_agentix.write_text("#!/usr/bin/env bash\nexit 3\n", encoding="utf-8")
+    fake_agentix.chmod(0o755)
+
+    result = worktree_run(
+        path=project,
+        goal="create module legit with template packages",
+        agentix_command=str(fake_agentix),
+        json_output=True,
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert result == 3
+    assert payload["error"] == "goal_failed"
+    assert payload["source_modified"] is False
+    assert "source_mutations" not in payload
+
+
 def _read_audit_events(project: Path) -> list[dict]:
     audit_log = project / ".agentix" / "audit.jsonl"
     if not audit_log.exists():

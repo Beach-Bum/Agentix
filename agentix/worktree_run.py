@@ -94,6 +94,31 @@ def worktree_run(
             "path": str(path),
         })
 
+    def _source_mutations(allowed: set[str] | None = None) -> list[str]:
+        """What changed in the source workspace since the pre-run snapshot.
+
+        Fails closed: a snapshot that cannot be taken is reported as a mutation.
+        """
+        after = snapshot_source(path)
+        if after.get("error"):
+            return [after["error"]]
+        return compare_source(source_before, after, allowed_new_paths=allowed)
+
+    def _record_taint_on_failure() -> None:
+        # A goal that failed or timed out may still have written to the source
+        # workspace. Without this the result would say source_modified=False
+        # for a run that was never checked.
+        mutations = _source_mutations()
+        if not mutations:
+            return
+        result["source_modified"] = True
+        result["source_mutations"] = mutations
+        if not json_output:
+            print()
+            print("Source workspace was mutated unexpectedly:")
+            for m in mutations:
+                print(f"- {m}")
+
     ok, problems = workspace_preflight(path, allow_dirty=False)
     if not ok:
         result["error"] = "preflight_failed"
@@ -183,6 +208,7 @@ def worktree_run(
                 if json_output:
                     result["goal_stdout"] = (exc.stdout or "") if isinstance(exc.stdout, str) else ""
                     result["goal_stderr"] = (exc.stderr or "") if isinstance(exc.stderr, str) else ""
+                _record_taint_on_failure()
                 _audit_worktree("timeout")
                 if json_output:
                     emit_json(result)
@@ -198,6 +224,7 @@ def worktree_run(
 
             if goal_result.returncode != 0:
                 result["error"] = "goal_failed"
+                _record_taint_on_failure()
                 _audit_worktree("goal_failed")
                 if json_output:
                     emit_json(result)
