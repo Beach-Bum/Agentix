@@ -23,12 +23,9 @@
 
             build-system = [ pkgs.python3Packages.hatchling ];
 
-            nativeCheckInputs = [ pkgs.python3Packages.pytest ];
-            checkPhase = ''
-              runHook preCheck
-              pytest tests/ -x
-              runHook postCheck
-            '';
+            # The test suite shells out to `uv run agentix`, git and nix,
+            # none of which exist in the build sandbox. It runs in CI instead.
+            doCheck = false;
 
             meta = {
               description = "Safety-first control layer for NixOS";
