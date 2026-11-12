@@ -32,11 +32,14 @@ jobs:
         run: |
           find . -name '*.py' -not -path './.git/*' | xargs -I{} python3 -c "import ast, sys; ast.parse(open(sys.argv[1]).read())" {}
 
+      # The tests drive the installed CLI through `uv run agentix`.
+      - uses: astral-sh/setup-uv@v4
+
       - name: Run tests
         run: |
-          pip install -e ".[dev]" 2>/dev/null || pip install -e .
+          pip install -e .
           pip install pytest
-          pytest tests/ -x --tb=short
+          pytest tests/ --tb=short
 
   nix:
     runs-on: ubuntu-latest
